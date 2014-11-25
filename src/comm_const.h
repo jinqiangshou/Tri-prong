@@ -1,0 +1,12 @@
+#ifndef __COMM_CONST_H__
+#define __COMM_CONST_H__
+
+#define MAX_WAIT_EVENT 500
+#define MAXDATASIZE 100
+#define MAX_URL_SIZE 1000
+#define MAX_REQUEST_SIZE 2048
+#define MAX_RECV_SIZE_ONE_TIME 8192
+#define MAXRATE 5000
+#define MAXTIME 3600
+
+#endif //__COMM_CONST_H__
