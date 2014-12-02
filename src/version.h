@@ -6,5 +6,4 @@
 #define AUTHOR "Horst Xu"
 #define CONTACT "271021733@qq.com"
 
-
 #endif //__VERSION_H__
