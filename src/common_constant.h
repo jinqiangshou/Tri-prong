@@ -7,7 +7,7 @@
 #define MAX_URL_SIZE 1000
 #define MAX_REQUEST_SIZE 2048
 #define MAX_RECV_SIZE_ONE_TIME 8192 //unit: bytes
-#define MAX_RATE 5000
+#define MAX_RATE 10000
 #define MAX_TIME 100
 
 #endif //__COMM_CONST_H__
