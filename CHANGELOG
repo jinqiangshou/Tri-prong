@@ -1,0 +1,21 @@
+Tri-prong by horstxu, 271021733@qq.com
+
+=====================================
+
+Version 1.0 (Initial Version, Dec. 9th, 2014)
+
+-------------------------------------
+
+Version 1.1 (Dec. 23rd, 2014)
+
+1. Replace 3 options (-h, -p, -u) by a single option (-u). For example,
+	Version 1.0: ./tri-prong -r 1 -t 1 -h 127.0.0.1 -p 8080 -u /index.html
+	Version 1.1: ./tri-prong -r 1 -t 1 -u http://127.0.0.1:8080/index.html
+   Tri-prong is able to parse url now. The default port number is 80.
+   
+2. If the total press number is lower than 100, the tool will not check whether every connection starts on time.
+   For example, ./tri-prong -r 10 -t 9 -u http://127.0.0.1:8080/index.html
+   The total press number is 10*9 = 90. In this case you can never see the output: "ATTENTION: The actual RPS ..."
+   even if some requests are delayed.
+   
+-------------------------------------
