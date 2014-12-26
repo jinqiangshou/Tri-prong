@@ -2,22 +2,42 @@
 #define __COMMON_STRUCT_H__
 
 #include <sys/time.h>
+#include "common_constant.h"
+
+//传输协议
+typedef enum {
+	HTTP = 0,
+	HTTPS,
+	FTP
+} transfer_protocol;
+
+//没有被parse时候的完整url
+typedef struct __full_url_list {
+	char* full_url[MAX_URL_NUMBER];
+	int url_number;
+} full_url_list;
+
+//存储主机信息
+typedef struct __host_info {
+	transfer_protocol protocol_type;
+	char *host_ip;
+	unsigned short port;
+	char *uri;
+} host_info;
 
 //存储所有命令行参数信息
 typedef struct __parameters_set {
 	int __press_rate;
 	int __press_time;
-	char *__host_ip;
-	unsigned short __port;
-	char *__uri;
+	host_info* host[MAX_URL_NUMBER];
+	int url_number;
 } parameters_set;
 
-//存储主机信息
-typedef struct __host_info {
-	char *host_ip;
-	unsigned short port;
-	char *uri;
-} host_info;
+//存储用于计算connect的准时率时所需的信息,记录thread_conn主循环的开始和结束时间
+typedef struct __test_connect_ontime {
+	timeval test_start;
+	timeval test_end;
+} test_connect_ontime;
 
 //用于存储每次连接的数据
 typedef struct __request_data {
