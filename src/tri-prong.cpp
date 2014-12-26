@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <sys/time.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/in.h>
@@ -22,7 +23,7 @@
 #include "build_request.h"
 #include "output.h"
 #include "version.h"
-
+#include "parse_url.h"
 
 int fd[2]; //fd用于conn和send之间的通信
 int fd2[2]; //fd2用于send和recv之间的通信
@@ -37,20 +38,17 @@ int press_number = 0; //单位 request，压测的次数
 
 double press_interval = 1000000.0; //该数值等于press_rate的倒数，单位为 微秒
 
-char temp_host_ip[] = "127.0.0.1";
-char temp_uri[] = "/";
-host_info host = { temp_host_ip, 80, temp_uri };//存储server的信息
+static full_url_list url_list = { {NULL}, 0 }; //从参数或文件中读取的完整url列表
 const struct linger so_linger = { 1, 0 }; //设置描述符快速回收
-static parameters_set parameters = { 0, 0, temp_host_ip, 80, temp_uri }; //存储所有的参数信息
+static parameters_set parameters = { 0, 0, {NULL}, 0 }; //存储所有的参数信息
+static test_connect_ontime connect_ontime = {{0,0}, {0,0}}; //用于计算所有connect的准时率
 request_data *test_data; //长度为测试总数的数组，存储每次测试的数据
 static final_statistics *overall_stat; //最终将会被输出到屏幕上的数据
 
 static const struct option long_options[] = {
 	{"rate", required_argument, NULL, 'r'},
-	{"host", required_argument, NULL, 'h'},
-	{"port", required_argument, NULL, 'p'},
 	{"time", required_argument, NULL, 't'},
-	{"uri", required_argument, NULL, 'u'},
+	{"url", required_argument, NULL, 'u'},
 	{NULL, 0, NULL, 0}
 };
 
@@ -116,12 +114,14 @@ void *thread_conn( void *para )
 	struct timespec sleep_time;
 	gettimeofday( &start_this, NULL );
 	memcpy( &start_backup, &start_this, sizeof(start_this) );
+	memcpy( &(connect_ontime.test_start), &start_this, sizeof(start_this) ); //用于connect准时率统计
+	
 	for( int i = 0; i < press_number; i++ )
 	{
 		/* 新建socket，并connect，然后将socket描述符写入fd[1]管道 */
 		struct hostent *he;
 		struct sockaddr_in server;
-		if( (he = gethostbyname(host.host_ip)) == NULL )
+		if( (he = gethostbyname(parameters.host[0]->host_ip)) == NULL )
 		{
 			fprintf( stderr, "ERROR message (from file %s, line %d): gethostbyname() error.\n", __FILE__, __LINE__ );
 			exit( 1 );
@@ -135,7 +135,7 @@ void *thread_conn( void *para )
 		
 		bzero( &server, sizeof(server) );
 		server.sin_family = AF_INET;
-		server.sin_port = htons( host.port );
+		server.sin_port = htons( parameters.host[0]->port );
 		server.sin_addr = *( (struct in_addr *)he->h_addr );
 		
 		//设置socket为非阻塞
@@ -173,12 +173,13 @@ void *thread_conn( void *para )
 		{ //如果还没到发送下一个的时间，则睡眠一会
 			sleep_time.tv_sec = (int)( floor(press_interval - timedif) + 0.1 ) / 1000000;
 			sleep_time.tv_nsec = ( (int)(floor(press_interval - timedif) + 0.1) % 1000000 ) * 1000;
-			nanosleep( &sleep_time, NULL ); //线程休眠一会
+			pselect( 0, NULL, NULL, NULL, &sleep_time, NULL); //线程休眠一会
 		}
 		
 		next_send_time( &start_this, &start_backup, (i+1) );
 	}
 	
+	gettimeofday( &(connect_ontime.test_end), NULL ); //得到结束时间
 	close( fd[1] );//关闭管道的写端
 	
 	return NULL;
@@ -306,6 +307,7 @@ void *thread_recv( void *para )
 	int read_count;
 	int time_out_pointer = 0;
 	timeval temptime; //用于临时记录时间
+	unsigned int timedif, timedif2;
 	request_data *temp_req_data;
 	int epfd_recv = epoll_create( MAX_WAIT_EVENT );
 	addfd_to_epoll2( epfd_recv, fd2[0], EPOLLIN, (void *)&fd2[0] );
@@ -390,19 +392,43 @@ void *thread_recv( void *para )
 		
 		/* 超时检测环节 */
 		gettimeofday( &temptime, NULL );
-		temptime.tv_sec -= REQUEST_TIME_OUT;
-		while( time_out_pointer < press_number && ( test_data[time_out_pointer].is_replied == -1 || test_data[time_out_pointer].sockfd == -1 ) )
+		
+		while( time_out_pointer < press_number )
 		{
-			time_out_pointer++;
-		}
-		while( time_out_pointer < press_number && test_data[time_out_pointer].init_connect.tv_sec > 0 && 
-			time_compare(&(test_data[time_out_pointer].init_connect), &temptime)>=0 && test_data[time_out_pointer].sockfd != -1 )
-		{
-			delete_from_epoll( epfd_recv, test_data[time_out_pointer].sockfd );
-			epfd_recv_count--;
-			close( test_data[time_out_pointer].sockfd );
-			test_data[time_out_pointer].sockfd = -1; //socket已经关闭
-			time_out_pointer++;
+			if( test_data[time_out_pointer].init_connect.tv_sec != 0 )
+			{ //该链接已经调用过connect
+				timedif = uint_time_diff( &temptime, &(test_data[time_out_pointer].init_connect) );
+				timedif2 = uint_time_diff( &temptime, &(test_data[time_out_pointer].init_connect) ) - test_data[time_out_pointer].recv_finish_time;
+				
+				if( test_data[time_out_pointer].is_replied == -1 || test_data[time_out_pointer].sockfd == -1 )
+				{ //已经出错了或者sockfd已经用完被关闭了
+					time_out_pointer++;
+				}else if( test_data[time_out_pointer].is_replied == 0 && timedif < REQUEST_TIME_OUT * 1000000 )
+				{ //没收到过回复，还没超时
+					break;
+				}else if( test_data[time_out_pointer].is_replied == 1 && timedif < REQUEST_TIME_OUT * 1000000 &&  timedif2 < REQUEST_EXPIRE_TIME )
+				{ //收到过回复，还没超时
+					break;
+				}else if( test_data[time_out_pointer].is_replied == 0 && timedif >= REQUEST_TIME_OUT * 1000000 )
+				{ //没收到过回复，超时间了
+					delete_from_epoll( epfd_recv, test_data[time_out_pointer].sockfd );
+					epfd_recv_count--;
+					close( test_data[time_out_pointer].sockfd );
+					test_data[time_out_pointer].sockfd = -1; //socket已经关闭
+					time_out_pointer++;
+				}else if( test_data[time_out_pointer].is_replied == 1 && ( timedif >= REQUEST_TIME_OUT * 1000000 || timedif2 >= REQUEST_EXPIRE_TIME ) )
+				{ //收到过回复，超时间了
+					delete_from_epoll( epfd_recv, test_data[time_out_pointer].sockfd );
+					epfd_recv_count--;
+					close( test_data[time_out_pointer].sockfd );
+					test_data[time_out_pointer].sockfd = -1; //socket已经关闭
+					time_out_pointer++;
+				}
+			}else
+			{
+				break;
+			}
+				
 		}
 	}
 
@@ -425,38 +451,36 @@ void init_parameter( int argc, char *argv[] )
 				parameters.__press_rate = atoi( optarg );
 				record += ( 1 << 0 );
 				break;
-			case 'h':
-				parameters.__host_ip = optarg;
+			case 'u':
+				url_list.full_url[0] = optarg;
+				url_list.url_number = 1;
 				record += ( 1 << 1 );
-				break;
-			case 'p':
-				parameters.__port = (unsigned short)( atoi(optarg) );
-				record += ( 1 << 2 );
 				break;
 			case 't':
 				parameters.__press_time = atoi( optarg );
-				record += ( 1 << 3 );
-				break;
-			case 'u':
-				parameters.__uri = optarg;
-				record += ( 1 << 4 );
+				record += ( 1 << 2 );
 				break;
 			default :
 				usage( tool_name );
 		}
 	}
 	
-	if ( (record & 0x9) != 0x9 ){
+	if ( (record & 0x7) != 0x7 ){
 		usage( tool_name );
 	}
 	
 	//将parameters中的内容复制到相应参数中
 	memcpy( &press_rate, &(parameters.__press_rate), sizeof(press_rate) );
 	memcpy( &press_time, &(parameters.__press_time), sizeof(press_time) );
-	memcpy( &(host.port), &(parameters.__port), sizeof(host.port) );
-
-	host.host_ip = parameters.__host_ip;
-	host.uri = parameters.__uri;
+	parameters.url_number = url_list.url_number;
+	for( int i=0; i<parameters.url_number; i++ )
+	{
+		parameters.host[i] = begin_parse( url_list.full_url[i] );
+		if( !parameters.host[i] )
+		{
+			usage( tool_name );
+		}
+	}
 	
 	check_setting();
 	
@@ -472,8 +496,8 @@ int main( int argc, char *argv[] )
 	tool_name = argv[0];
 	init_parameter( argc, argv );
 	
-	print_info();
-	
+	print_info(&parameters);
+
 	//初始化统计所用的struct
 	overall_stat = new final_statistics;
 	memset( overall_stat, 0, sizeof(final_statistics) );
@@ -510,9 +534,15 @@ int main( int argc, char *argv[] )
 	pthread_join( send_id, NULL );
 	pthread_join( recv_id, NULL );
 	
+	check_connect_ontime( press_number, &connect_ontime );
+	
 	statistics_calculation( overall_stat, test_data, press_number );
 	
 	print_statistics( overall_stat );
+	for( int i=0; i<parameters.url_number; i++ )
+	{
+		end_parse( parameters.host[i] );
+	}
 	delete overall_stat;
 	free( test_data );
 	
