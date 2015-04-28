@@ -8,7 +8,7 @@ FAQs
 
 #### Tri-prong的使用方法如何？
 
-答：使用方法已经简单到不能再简单，只有三个参数，分别是-r（自己设定的RPS，即压测频率），-t（压测时间），-u（待压测的URL链接）。
+答：使用方法已经简单到不能再简单，只有三个参数，分别是-r（自己设定的RPS，即压测频率），-t（压测时间），-u（待压测的URL链接）。Tri-prong为linux命令行工具，下载后直接make，出现可执行文件tri-prong，详见Example。
 
 #### Tri-prong与Apache自带的AB有什么区别？
 
@@ -24,3 +24,37 @@ FAQs
 #### 如果设定的RPS超过了Web服务器的处理能力，会怎样？
 
 答：这种情况下会出现超时，Tri-prong默认超过3秒没有得到HTTP响应，则认为是超时。最终的结果输出中，我们也有超时统计。需要注意的是，在超时比较多的情况下，比较容易出现errno=24错误，即打开的socket描述符过多，需要使用ulimit -n 20000调大。
+
+Example
+---------
+
+    horstxu@horstxu:~/$ ./tri-prong -r 1000 -t 10 -u http://127.0.0.1:8080/index.html
+    
+    This is Tri-prong 1.1 (last updated on Dec. 23rd, 2014), an HTTP benchmarking tool.
+    Copyright @ 2014 Horst Xu. Email: 271021733@qq.com
+    
+    Test Information
+        Host       : 127.0.0.1
+        Port       : 8080
+        URI        : /index.html
+        Target RPS : 1000   [#/second]
+        Test Time  : 10     [second]
+        
+    Now the host is under test. Please wait a moment ...
+    
+    The actual RPS is 1000, which is exactly equal to your settings.
+    Please refer to the test results as follows:
+    
+        TCP Connect Fail Count:    0         [#]
+        HTTP Response Fail Count:  0         [#]
+        Overall Fail Count:        0         [#]
+        Total Request Number:      10000     [#]
+        Fail Percent:              0.000%    
+        Total Bytes Transferred:   3100000   [Bytes]
+        
+    Request Time  [unit: us]
+                                min         max        avg
+        TCP Connect Time:       147        4439        229
+        HTTP Response Time:     274        3796        600
+        Total Request Time:     456        5172        831
+    horstxu@horstxu:~/$
